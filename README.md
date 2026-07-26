@@ -28,7 +28,7 @@
 ```bash
 bash <(curl -sL https://raw.githubusercontent.com/liumang114514/SillyTavern-Geek-Deploy/main/install.sh)
 ```
-*(注：请将上面的链接替换为你自己 GitHub 仓库的 RAW 链接)*
+
 
 ### 2. 部署流程演示：
 1. 脚本会智能检测你的 IPv4/IPv6。
