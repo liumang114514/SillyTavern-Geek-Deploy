@@ -111,7 +111,7 @@ if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
 else
     CADDY_ARCH="amd64"
 fi
-curl -sL "https://caddyserver.com/api/download?os=linux&arch=${CADDY_ARCH}" -o /usr/local/bin/caddy
+curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=${CADDY_ARCH}" -o /usr/local/bin/caddy
 chmod +x /usr/local/bin/caddy
 
 echo -e "${BLUE}[3/6] 正在从官方拉取源码并安装依赖 (${ST_BRANCH})...${NC}"
@@ -129,6 +129,7 @@ echo "$SECRET_SUFFIX" > $INSTALL_DIR/.suffix
 echo "$ST_USER" > $INSTALL_DIR/.user
 echo "$ST_PASS" > $INSTALL_DIR/.pass
 echo "$ST_BRANCH" > $INSTALL_DIR/.branch
+chmod 600 $INSTALL_DIR/.suffix $INSTALL_DIR/.user $INSTALL_DIR/.pass
 
 echo -e "${BLUE}[4/6] 正在配置后台参数...${NC}"
 cp default/config.yaml config.yaml 2>/dev/null || cp default.yaml config.yaml 2>/dev/null
@@ -261,6 +262,7 @@ show_menu() {
             [ -z "$NEW_PASS" ] && NEW_PASS=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 8)
             echo "$NEW_USER" > $INSTALL_DIR/.user
             echo "$NEW_PASS" > $INSTALL_DIR/.pass
+            chmod 600 $INSTALL_DIR/.user $INSTALL_DIR/.pass
             
             # 更新 Caddyfile 里的哈希和账号
             NEW_HASH=$(/usr/local/bin/caddy hash-password --plaintext "${NEW_PASS}")
@@ -275,6 +277,7 @@ show_menu() {
             PORT=$(cat $INSTALL_DIR/.port)
             NEW_SUFFIX=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 16)
             echo "$NEW_SUFFIX" > $INSTALL_DIR/.suffix
+            chmod 600 $INSTALL_DIR/.suffix
             
             cat > $INSTALL_DIR/Caddyfile << EOF2
 ${DOMAIN}:${PORT} {
