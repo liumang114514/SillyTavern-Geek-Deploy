@@ -128,6 +128,7 @@ echo "$PORT" > $INSTALL_DIR/.port
 echo "$SECRET_SUFFIX" > $INSTALL_DIR/.suffix
 echo "$ST_USER" > $INSTALL_DIR/.user
 echo "$ST_PASS" > $INSTALL_DIR/.pass
+echo "$ST_BRANCH" > $INSTALL_DIR/.branch
 
 echo -e "${BLUE}[4/6] 正在配置后台参数...${NC}"
 cp default/config.yaml config.yaml 2>/dev/null || cp default.yaml config.yaml 2>/dev/null
@@ -303,7 +304,10 @@ EOF2
         5)
             echo -e "正在从官方仓库拉取更新..."
             cd $INSTALL_DIR
-            git pull
+            BRANCH=$(cat $INSTALL_DIR/.branch 2>/dev/null || echo "release")
+            git fetch --all
+            git checkout $BRANCH
+            git pull origin $BRANCH
             npm install --omit=dev
             systemctl restart sillytavern
             echo -e "更新完成！"
