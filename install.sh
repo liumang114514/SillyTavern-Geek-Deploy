@@ -26,32 +26,44 @@ echo -e "${BLUE}[2/6] 检查并安装 Node.js 环境...${NC}"
 apt update -y >/dev/null 2>&1
 apt install -y curl git build-essential jq >/dev/null 2>&1
 
-ST_NODE_VER=$(curl -s https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/package.json | grep -o '"node": *">=[0-9]*' | grep -o '[0-9]*' | head -n 1)
-if [[ -z "$ST_NODE_VER" ]]; then
-    ST_NODE_VER="20"
-fi
-
-if ! command -v node >/dev/null 2>&1 || [[ $(node -v) != v${ST_NODE_VER}* ]]; then
-    echo -e "正在安装 Node.js v${ST_NODE_VER} LTS..."
-    curl -fsSL https://deb.nodesource.com/setup_${ST_NODE_VER}.x | bash - >/dev/null 2>&1
+if ! command -v node >/dev/null 2>&1; then
+    echo -e "正在安装 Node.js 最新 LTS 版..."
+    curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - >/dev/null 2>&1
     apt-get install -y nodejs >/dev/null 2>&1
 else
-    echo -e "Node.js v${ST_NODE_VER} 环境已满足"
+    echo -e "Node.js 环境已满足 (当前版本: $(node -v))"
 fi
 
 echo -e "${BLUE}[3/6] 正在安装 Caddy 网关 (用于处理 HTTPS 和 16位安全后缀)...${NC}"
-apt install -y debian-keyring debian-archive-keyring apt-transport-https >/dev/null 2>&1
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null 2>&1
-apt update >/dev/null 2>&1
-apt install -y caddy >/dev/null 2>&1
+ARCH=$(uname -m)
+if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+    CADDY_ARCH="arm64"
+else
+    CADDY_ARCH="amd64"
+fi
+curl -sL "https://caddyserver.com/api/download?os=linux&arch=${CADDY_ARCH}" -o /usr/local/bin/caddy
+chmod +x /usr/local/bin/caddy
 
-echo -e "${BLUE}[4/6] 正在部署 SillyTavern 极简版源码...${NC}"
+echo -e "${BLUE}[4/6] 正在部署 SillyTavern 源码...${NC}"
 rm -rf $INSTALL_DIR
-git clone -b release https://github.com/SillyTavern/SillyTavern.git $INSTALL_DIR >/dev/null 2>&1
+until git clone -b release https://github.com/SillyTavern/SillyTavern.git $INSTALL_DIR; do
+    echo -e "${RED}拉取源码失败，正在重试...${NC}"
+    rm -rf $INSTALL_DIR
+    sleep 2
+done
+
 cd $INSTALL_DIR
 npm install --omit=dev >/dev/null 2>&1
 echo "release" > $INSTALL_DIR/.branch
+
+if [ -f "default/config.yaml" ]; then
+    cp default/config.yaml config.yaml
+fi
+
+sed -i "s/listen: 127.0.0.1/listen: 127.0.0.1/g" config.yaml 2>/dev/null || true
+sed -i "s/port: 8000/port: 8000/g" config.yaml 2>/dev/null || true
+sed -i "s/whitelistMode: true/whitelistMode: false/g" config.yaml 2>/dev/null || true
+sed -i "s/basicAuthMode: true/basicAuthMode: false/g" config.yaml 2>/dev/null || true
 
 echo -e "${BLUE}[5/6] 正在配置安全防护 (随机端口与动态暗号)...${NC}"
 IP=$(curl -s4 ifconfig.me || curl -s4 icanhazip.com)
@@ -59,7 +71,7 @@ IP_HYPHEN=$(echo "$IP" | tr '.' '-')
 DOMAIN="${IP_HYPHEN}.nip.io"
 PORT=$(shuf -i 10000-60000 -n 1)
 SECRET_SUFFIX=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 16)
-USER="silly"
+USER=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 8)
 PASS=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 8)
 
 echo "$PORT" > $INSTALL_DIR/.port
@@ -253,14 +265,8 @@ EOF2
             read -p "按回车键返回..."
             ;;
         6)
-            echo -e "正在检测官方最新要求的 Node.js 版本..."
-            ST_NODE_VER=$(curl -s https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/package.json | grep -o '"node": *">=[0-9]*' | grep -o '[0-9]*' | head -n 1)
-            if [[ -z "$ST_NODE_VER" ]]; then
-                ST_NODE_VER="20"
-            fi
-            echo -e "官方要求的最低 Node 大版本为: v${ST_NODE_VER}"
-            echo -e "正在为您升级到该版本的最新 LTS..."
-            curl -fsSL https://deb.nodesource.com/setup_${ST_NODE_VER}.x | bash - >/dev/null 2>&1
+            echo -e "正在为您升级到 Node.js 官方最新 LTS 版本..."
+            curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - >/dev/null 2>&1
             apt-get install -y nodejs >/dev/null 2>&1
             echo -e "Node.js 环境升级完成！当前版本: $(node -v)"
             systemctl restart sillytavern
