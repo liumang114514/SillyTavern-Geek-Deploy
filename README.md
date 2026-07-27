@@ -32,7 +32,7 @@ bash <(curl -sL https://raw.githubusercontent.com/liumang114514/SillyTavern-Geek
 
 ### 2. 部署流程演示：
 1. 脚本会智能检测你的 IPv4/IPv6。
-2. 提示你选择想要的分支（Release 最新版 / 1.14.0 旧版）。
+2. 自动安装最新的silly版本。
 3. 全自动编译、下载依赖、配置 Caddy 网关及守护进程。
 4. 安装完成后，终端会打印出包含 **16 位安全后缀** 的专属暗号链接与账号密码。
 
