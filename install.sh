@@ -99,9 +99,12 @@ systemctl disable nginx apache2 2>/dev/null || true
 apt update -y >/dev/null 2>&1
 apt install -y curl git build-essential jq >/dev/null 2>&1
 
-if ! command -v node &> /dev/null || [[ $(node -v) != v20* ]]; then
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1
+if ! command -v node &> /dev/null || [ "$(node -v | cut -c 2-3)" -lt 20 ]; then
+    echo -e "正在安装 Node.js 官方最新 LTS 版..."
+    curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - >/dev/null 2>&1
     apt-get install -y nodejs >/dev/null 2>&1
+else
+    echo -e "Node.js 环境已满足 (当前版本: $(node -v))"
 fi
 
 echo -e "${BLUE}[2/6] 正在安装 Caddy 网关 (用于处理 HTTPS 和 16位安全后缀)...${NC}"
