@@ -35,7 +35,3 @@ bash <(curl -sL https://raw.githubusercontent.com/liumang114514/SillyTavern-Geek
   [0] 退出
 ======================================================
 ```
-
-## 📜 许可证
-
-[MIT](LICENSE)
