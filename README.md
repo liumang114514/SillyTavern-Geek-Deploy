@@ -15,7 +15,7 @@
 在全新干净的 Linux VPS (如 Ubuntu 20.04+ / Debian 11+) 上，使用 `root` 权限运行以下命令：
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/yewumian11432/SillyTavern-Geek-Deploy/main/install.sh)
+bash <(curl -sL https://raw.githubusercontent.com/liumang114514/SillyTavern-Geek-Deploy/main/install.sh)
 ```
 
 ## 🛠️ 控制台功能 (`silly`)
