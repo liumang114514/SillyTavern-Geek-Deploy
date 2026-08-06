@@ -1,362 +1,289 @@
 #!/bin/bash
 # ==============================================================================
-# SillyTavern 云端终极部署脚本 (Caddy 代理 / 16位安全后缀 / 随机端口版)
-# 作者: Antigravity AI
+# SillyTavern + Caddy 一键部署脚本 (纯净反代 + 原生锁定)
 # ==============================================================================
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' 
-
-INSTALL_DIR="/opt/SillyTavern"
-CLI_PATH="/usr/local/bin/silly"
-
 if [ "$EUID" -ne 0 ]; then
-    echo -e "${RED}[ERROR] 请使用 root 权限运行此脚本 (例如: sudo -i)${NC}"
-    exit 1
+  echo "请使用 root 权限运行此脚本"
+  exit
 fi
 
-echo -e "${BLUE}======================================================${NC}"
-echo -e "${GREEN}  欢迎使用 SillyTavern 极简云端部署脚本${NC}"
-echo -e "${BLUE}======================================================${NC}"
+echo "=========================================="
+echo "开始部署 SillyTavern..."
+echo "=========================================="
+echo ""
 
-# 1. 选择版本
-echo -e "\n${YELLOW}请选择你要安装的 SillyTavern 版本：${NC}"
-echo -e "  [1] 最新官方 Release 版 (推荐，包含最新功能)"
-echo -e "  [2] 1.14.0 老版本 (针对需要特定旧版插件的用户)"
-read -p "请输入数字 [1/2] (默认: 1): " VER_CHOICE
-if [ "$VER_CHOICE" == "2" ]; then
-    ST_BRANCH="1.14.0"
-else
-    ST_BRANCH="release"
-fi
-
-# 2. 自定义域名设置
-echo -e "\n${YELLOW}是否绑定自定义域名？${NC}"
-echo -e "注意：如果你输入了域名，请务必确保域名的 A 记录已指向本服务器！"
-read -p "请输入域名 [直接回车则自动生成无域名的 IP 加密链接]: " CUSTOM_DOMAIN
-
-echo -e "${YELLOW}正在智能检测服务器 IP (优先检测 IPv4)...${NC}"
-# 强制优先获取 IPv4
-PUBLIC_IP=$(curl -s -4 ifconfig.me 2>/dev/null)
-if [ -z "$PUBLIC_IP" ]; then
-    PUBLIC_IP=$(curl -s -4 api.ipify.org 2>/dev/null)
-fi
-
-IS_IPV6=false
-if [ -z "$PUBLIC_IP" ]; then
-    # 退避使用 IPv6
-    PUBLIC_IP=$(curl -s -6 ifconfig.me 2>/dev/null)
-    IS_IPV6=true
-fi
-
-if [ -z "$PUBLIC_IP" ]; then
-    echo -e "${RED}[ERROR] 无法获取任何公网 IP (IPv4 和 IPv6 均失败)，请检查网络！${NC}"
-    exit 1
-fi
+# 1. 获取用户输入
+read -p "请输入您的完整域名 [直接回车则使用魔法域名]: " CUSTOM_DOMAIN
 
 if [ -n "$CUSTOM_DOMAIN" ]; then
     DOMAIN="$CUSTOM_DOMAIN"
-    echo -e "${GREEN}已设置为自定义域名: ${DOMAIN}${NC}"
 else
-    if [ "$IS_IPV6" = true ]; then
+    echo "请选择魔法域名类型："
+    echo "  [1] IPv4 (自动分配 .nip.io 后缀)"
+    echo "  [2] IPv6 (自动分配 .sslip.io 后缀)"
+    read -p "请输入选项 [1 或 2，默认优先 1]: " IP_CHOICE
+    
+    if [ "$IP_CHOICE" = "2" ]; then
+        PUBLIC_IP=$(curl -s -6 ifconfig.me 2>/dev/null)
+        if [ -z "$PUBLIC_IP" ]; then
+            echo "错误：无法获取公网 IPv6 地址，请确认服务器是否支持 IPv6！"
+            exit 1
+        fi
         DOMAIN="${PUBLIC_IP//:/-}.sslip.io"
-        echo -e "${GREEN}检测到纯 IPv6 服务器，自动分配: ${DOMAIN}${NC}"
     else
+        PUBLIC_IP=$(curl -s -4 ifconfig.me 2>/dev/null)
+        if [ -z "$PUBLIC_IP" ]; then
+            PUBLIC_IP=$(curl -s -4 api.ipify.org 2>/dev/null)
+        fi
+        if [ -z "$PUBLIC_IP" ]; then
+            echo "错误：无法获取公网 IPv4 地址！"
+            exit 1
+        fi
         DOMAIN="${PUBLIC_IP//./-}.nip.io"
-        echo -e "${GREEN}成功获取 IPv4 地址，自动分配泛域名: ${DOMAIN}${NC}"
     fi
 fi
+echo "使用域名: $DOMAIN"
 
-# 3. 随机端口与安全后缀生成
-echo -e "\n${YELLOW}请设置酒馆对外运行端口：${NC}"
-read -p "请输入端口号 [回车自动随机生成 10000-60000]: " PORT
+read -p "请输入访问端口号 [直接回车则随机生成 10000-60000]: " PORT
 if [ -z "$PORT" ]; then
     PORT=$(shuf -i 10000-60000 -n 1)
 fi
 
-# 自动生成 16 位安全后缀和 8 位账号密码
-SECRET_SUFFIX=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 16)
-ST_USER=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 8)
-ST_PASS=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 8)
+echo "准备安装依赖..."
+apt-get update
+apt-get install -y curl git jq
 
-echo -e "\n${GREEN}---- 部署信息预览 ----${NC}"
-echo -e "安装版本: ${ST_BRANCH}"
-echo -e "绑定域名: ${DOMAIN}"
-echo -e "运行端口: ${PORT}"
-echo -e "安全后缀: ${SECRET_SUFFIX}"
-echo -e "登录账号: ${ST_USER}"
-echo -e "----------------------"
-read -p "按回车键开始全自动安装..." 
+curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+apt-get install -y nodejs
 
-# ----------------- 开始安装 -----------------
-echo -e "\n${BLUE}[1/6] 正在停止冲突的 Web 服务并安装依赖...${NC}"
-systemctl stop nginx apache2 caddy 2>/dev/null || true
-systemctl disable nginx apache2 2>/dev/null || true
+# 2. 部署 SillyTavern
+echo "正在下载 SillyTavern..."
+rm -rf /opt/SillyTavern
+git clone https://github.com/SillyTavern/SillyTavern.git /opt/SillyTavern
+cd /opt/SillyTavern
+npm install
 
-apt update -y >/dev/null 2>&1
-apt install -y curl git build-essential jq >/dev/null 2>&1
-
-if ! command -v node &> /dev/null || [ "$(node -v | cut -c 2-3)" -lt 20 ]; then
-    echo -e "正在安装 Node.js 官方最新 LTS 版..."
-    curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - >/dev/null 2>&1
-    apt-get install -y nodejs >/dev/null 2>&1
-else
-    echo -e "Node.js 环境已满足 (当前版本: $(node -v))"
-fi
-
-echo -e "${BLUE}[2/6] 正在安装 Caddy 网关 (用于处理 HTTPS 和 16位安全后缀)...${NC}"
-ARCH=$(uname -m)
-if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-    CADDY_ARCH="arm64"
-else
-    CADDY_ARCH="amd64"
-fi
-curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=${CADDY_ARCH}" -o /usr/local/bin/caddy
-chmod +x /usr/local/bin/caddy
-
-echo -e "${BLUE}[3/6] 正在从官方拉取源码并安装依赖 (${ST_BRANCH})...${NC}"
-if [ -d "$INSTALL_DIR" ]; then
-    rm -rf "$INSTALL_DIR"
-fi
-git clone -b $ST_BRANCH https://github.com/SillyTavern/SillyTavern.git "$INSTALL_DIR" >/dev/null 2>&1
-cd "$INSTALL_DIR" || exit
-npm install --omit=dev >/dev/null 2>&1
-
-# 保存环境元数据
-echo "$DOMAIN" > $INSTALL_DIR/.domain
-echo "$PORT" > $INSTALL_DIR/.port
-echo "$SECRET_SUFFIX" > $INSTALL_DIR/.suffix
-echo "$ST_USER" > $INSTALL_DIR/.user
-echo "$ST_PASS" > $INSTALL_DIR/.pass
-echo "$ST_BRANCH" > $INSTALL_DIR/.branch
-chmod 600 $INSTALL_DIR/.suffix $INSTALL_DIR/.user $INSTALL_DIR/.pass
-
-echo -e "${BLUE}[4/6] 正在配置后台参数...${NC}"
+echo "正在配置基本参数..."
 cp default/config.yaml config.yaml 2>/dev/null || cp default.yaml config.yaml 2>/dev/null
-# 因为 Caddy 会负责外网访问，SillyTavern 本体安全地绑定在本地 8000 端口
-sed -i "s/listen: 127.0.0.1/listen: 127.0.0.1/g" config.yaml
-sed -i "s/port: 8000/port: 8000/g" config.yaml
-sed -i "s/whitelistMode: true/whitelistMode: false/g" config.yaml
-sed -i "s/basicAuthMode: true/basicAuthMode: false/g" config.yaml
 
-# 生成密码哈希给 Caddy 使用
-HASH=$(/usr/local/bin/caddy hash-password --plaintext "${ST_PASS}")
+# 彻底修复配置替换逻辑，确保正确关闭白名单并开启账号
+node -e "
+const fs = require('fs');
+let conf = fs.readFileSync('config.yaml', 'utf8');
+conf = conf.replace(/listen: false/, 'listen: true');
+conf = conf.replace(/whitelistMode:\s*true/, 'whitelistMode: false');
+conf = conf.replace(/basicAuthMode:\s*true/, 'basicAuthMode: false');
+conf = conf.replace(/enableUserAccounts:\s*false/, 'enableUserAccounts: true');
+conf = conf.replace(/whitelist:[\s\S]*?whitelistDockerHosts:/, 'whitelist: []\nwhitelistDockerHosts:');
+fs.writeFileSync('config.yaml', conf);
+"
 
-echo -e "${BLUE}[5/6] 正在配置防火墙和系统服务...${NC}"
-cat > $INSTALL_DIR/Caddyfile << EOF
-${DOMAIN}:${PORT} {
-    @knock path /${SECRET_SUFFIX}
-    handle @knock {
-        header Set-Cookie "st_auth=${SECRET_SUFFIX}; Path=/; HttpOnly; Max-Age=86400"
-        redir * /
+# 3. 生成原生密码并锁定 default-user
+echo "正在生成初始安全密码..."
+NODE_SCRIPT=$(cat << 'EOF'
+const crypto = require('crypto');
+const fs = require('fs');
+
+const password = crypto.randomBytes(6).toString('hex');
+const salt = crypto.randomBytes(16).toString('base64');
+const hash = crypto.scryptSync(password.normalize(), salt, 64).toString('base64');
+
+const data = {
+    key: "user:default-user",
+    value: {
+        handle: "default-user",
+        name: "User",
+        created: Date.now(),
+        password: hash,
+        admin: true,
+        enabled: true,
+        salt: salt
     }
+};
 
-    # 2. 验证是否带有 Cookie
-    @auth {
-        header_regexp Cookie st_auth=${SECRET_SUFFIX}
-    }
+const storageDir = '/opt/SillyTavern/data/_storage';
+const storageFile = storageDir + '/' + crypto.createHash('sha256').update('user:default-user').digest('hex');
 
-    handle @auth {
-        basicauth * {
-            ${ST_USER} ${HASH}
-        }
-        reverse_proxy 127.0.0.1:8000
-    }
-
-    # 3. 不符合条件的扫描器全部 404
-    handle {
-        abort
-    }
+if (!fs.existsSync(storageDir)){
+    fs.mkdirSync(storageDir, { recursive: true });
 }
-EOF
 
+fs.writeFileSync(storageFile, JSON.stringify(data));
+console.log(password);
+EOF
+)
+
+ST_PASSWORD=$(node -e "$NODE_SCRIPT")
+
+# 更改目录属主为 nobody，提升安全性
+chown -R nobody:nogroup /opt/SillyTavern
+
+# 保存环境元数据给控制台使用
+echo "$DOMAIN" > /opt/SillyTavern/.domain
+echo "$PORT" > /opt/SillyTavern/.port
+
+# 4. 配置 Systemd
 cat > /etc/systemd/system/sillytavern.service << EOF
 [Unit]
-Description=SillyTavern Service
+Description=SillyTavern
 After=network.target
 
 [Service]
 Type=simple
-User=root
-WorkingDirectory=$INSTALL_DIR
+User=nobody
+Group=nogroup
+WorkingDirectory=/opt/SillyTavern
 ExecStart=/usr/bin/node server.js
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-cat > /etc/systemd/system/caddy.service << EOF
-[Unit]
-Description=Caddy Proxy
-After=network.target
-
-[Service]
-Type=notify
-User=root
-ExecStart=/usr/local/bin/caddy run --environ --config $INSTALL_DIR/Caddyfile
-ExecReload=/usr/local/bin/caddy reload --config $INSTALL_DIR/Caddyfile --force
-TimeoutStopSec=5s
+Restart=always
+Nice=-5
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable sillytavern caddy >/dev/null 2>&1
-systemctl restart sillytavern caddy
+systemctl enable --now sillytavern
 
-# 配置 Caddy 自动更新防范 0day 漏洞 (每天凌晨 4 点执行)
-echo "0 4 * * * root /usr/local/bin/caddy upgrade && systemctl restart caddy >/dev/null 2>&1" > /etc/cron.d/caddy-upgrade
-chmod 644 /etc/cron.d/caddy-upgrade
+# 5. 安装与配置 Caddy
+echo "正在配置 Caddy 反向代理..."
+apt-get install -y debian-keyring debian-archive-keyring apt-transport-https
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --yes --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
+apt-get update
+apt-get install caddy -y
 
-echo -e "${BLUE}[6/6] 正在生成 'silly' 终端控制台...${NC}"
-cat > $CLI_PATH << 'EOF'
+# 生成 Caddyfile
+cat > /opt/SillyTavern/Caddyfile << EOF
+$DOMAIN:$PORT {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8000
+}
+EOF
+
+caddy stop 2>/dev/null || true
+cp /opt/SillyTavern/Caddyfile /etc/caddy/Caddyfile
+systemctl enable caddy
+systemctl restart caddy
+
+# 6. 生成傻瓜式控制台工具 (silly)
+cat > /usr/local/bin/silly << 'EOF'
 #!/bin/bash
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+RED='\033[0;31m'
+NC='\033[0m'
+
 INSTALL_DIR="/opt/SillyTavern"
 
 show_menu() {
     clear
-    echo -e "\033[0;34m======================================================\033[0m"
-    echo -e "  \033[0;32m🍺 SillyTavern 管理控制台\033[0m (状态: $(systemctl is-active sillytavern))"
-    echo -e "\033[0;34m======================================================\033[0m"
-    echo -e "  [1] \033[0;36m👁️  查看酒馆完整登录地址 (含后缀) 与账号密码\033[0m"
-    echo -e "  [2] \033[0;36m🔄  重启所有服务 (SillyTavern + Caddy)\033[0m"
-    echo -e "  [3] \033[0;33m🔑  修改/重置账号与密码\033[0m"
-    echo -e "  [4] \033[0;35m🛠️  重新生成 16位安全后缀\033[0m"
-    echo -e "  [5] \033[0;32m⬆️  从官方源码拉取最新更新 (SillyTavern)\033[0m"
-    echo -e "  [6] \033[0;36m⏹️  停止 / 启动 服务\033[0m"
-    echo -e "  [7] \033[0;31m🗑️  卸载 SillyTavern 与代理\033[0m"
-    echo -e "  [8] \033[0;34m🛡️  升级 Caddy 网关防线到最新版\033[0m"
-    echo -e "  [9] \033[0;35m📝  查看酒馆运行日志\033[0m"
-    echo -e "  [0] \033[0;37m🚪  退出\033[0m"
-    echo -e "\033[0;34m======================================================\033[0m"
-    read -p "请输入选择 [0-9]: " choice
+    echo -e "${BLUE}======================================================${NC}"
+    echo -e "               ${GREEN}SillyTavern 快捷管理面板${NC}               "
+    echo -e "${BLUE}======================================================${NC}"
+    echo -e "  [1] \033[0;36m查看酒馆完整登录地址与初始账户\033[0m"
+    echo -e "  [2] \033[0;33m重置酒馆登录密码\033[0m"
+    echo -e "  [3] \033[0;36m重启所有服务 (SillyTavern + Caddy)\033[0m"
+    echo -e "  [4] \033[0;35m查看酒馆运行日志\033[0m"
+    echo -e "  [5] \033[0;32m一键更新酒馆与代理组件 (保留数据)\033[0m"
+    echo -e "  [6] \033[0;31m彻底卸载酒馆与代理服务\033[0m"
+    echo -e "  [0] \033[0;37m退出\033[0m"
+    echo -e "${BLUE}======================================================${NC}"
+    read -p "请输入选择 [0-6]: " choice
     case $choice in
         1)
-            PORT=$(cat $INSTALL_DIR/.port)
-            SUFFIX=$(cat $INSTALL_DIR/.suffix)
             DOMAIN=$(cat $INSTALL_DIR/.domain 2>/dev/null)
-            USER=$(cat $INSTALL_DIR/.user 2>/dev/null)
-            PASS=$(cat $INSTALL_DIR/.pass 2>/dev/null)
+            PORT=$(cat $INSTALL_DIR/.port 2>/dev/null)
             
-            echo -e "\n\033[0;31m⚠️ 必须通过带有后缀的完整地址进行第一次访问，否则会报404！\033[0m"
-            echo -e "\033[0;32m🌐 完整访问地址:\033[0m https://${DOMAIN}:${PORT}/${SUFFIX}"
-            echo -e "\033[0;32m👤 登录账号:\033[0m ${USER}"
-            echo -e "\033[0;32m🔑 登录密码:\033[0m ${PASS}"
+            echo -e "\n\033[0;32m🌐 完整访问地址:\033[0m https://${DOMAIN}:${PORT}"
+            echo -e "\033[0;32m👤 初始登录账户:\033[0m default-user"
+            echo -e "\033[0;33m(为了安全，控制台不再提供密码查看功能，遗忘请按 [2] 重置)\033[0m"
             read -p "按回车键返回..."
             ;;
         2)
+            echo -e "\n"
+            read -p "请输入新密码 (直接回车则随机生成 12 位密码): " NEW_PASS
+            if [ -z "$NEW_PASS" ]; then
+                NEW_PASS=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 12)
+            fi
+            
+            echo "正在重置底层数据库密码..."
+            NODE_SCRIPT=$(cat << 'EOF2'
+const crypto = require('crypto');
+const fs = require('fs');
+const newPass = process.argv[1];
+const salt = crypto.randomBytes(16).toString('base64');
+const hash = crypto.scryptSync(newPass.normalize(), salt, 64).toString('base64');
+
+const data = {
+    key: "user:default-user",
+    value: {
+        handle: "default-user",
+        name: "User",
+        created: Date.now(),
+        password: hash,
+        admin: true,
+        enabled: true,
+        salt: salt
+    }
+};
+
+const storageFile = '/opt/SillyTavern/data/_storage/' + crypto.createHash('sha256').update('user:default-user').digest('hex');
+fs.writeFileSync(storageFile, JSON.stringify(data));
+EOF2
+)
+            node -e "$NODE_SCRIPT" "$NEW_PASS"
+            chown -R nobody:nogroup /opt/SillyTavern/data/_storage 2>/dev/null
+            systemctl restart sillytavern
+            echo -e "✅ 密码已成功重置为: \033[0;32m$NEW_PASS\033[0m"
+            read -p "按回车键返回..."
+            ;;
+        3)
             echo -e "正在重启..."
             systemctl restart sillytavern caddy
             echo -e "重启完成！"
             read -p "按回车键返回..."
             ;;
-        3)
-            echo -e "\n当前账号密码如下："
-            grep "basicAuth" $INSTALL_DIR/config.yaml
-            read -p "输入新账号 (回车随机生成): " NEW_USER
-            read -p "输入新密码 (回车随机生成): " NEW_PASS
-            [ -z "$NEW_USER" ] && NEW_USER=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 8)
-            [ -z "$NEW_PASS" ] && NEW_PASS=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 8)
-            echo "$NEW_USER" > $INSTALL_DIR/.user
-            echo "$NEW_PASS" > $INSTALL_DIR/.pass
-            chmod 600 $INSTALL_DIR/.user $INSTALL_DIR/.pass
-            
-            # 更新 Caddyfile 里的哈希和账号
-            NEW_HASH=$(/usr/local/bin/caddy hash-password --plaintext "${NEW_PASS}")
-            sed -i -E "s/basicauth \* \{.*\}/basicauth \* \{\n            ${NEW_USER} ${NEW_HASH}\n        \}/" $INSTALL_DIR/Caddyfile
-            systemctl restart caddy
-            echo -e "账号已修改为: ${NEW_USER}"
-            echo -e "密码已修改为: ${NEW_PASS}"
-            read -p "按回车键返回..."
-            ;;
         4)
-            DOMAIN=$(cat $INSTALL_DIR/.domain)
-            PORT=$(cat $INSTALL_DIR/.port)
-            NEW_SUFFIX=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 16)
-            echo "$NEW_SUFFIX" > $INSTALL_DIR/.suffix
-            chmod 600 $INSTALL_DIR/.suffix
-            
-            cat > $INSTALL_DIR/Caddyfile << EOF2
-${DOMAIN}:${PORT} {
-    @knock path /${NEW_SUFFIX}
-    handle @knock {
-        header Set-Cookie "st_auth=${NEW_SUFFIX}; Path=/; HttpOnly; Max-Age=86400"
-        redir * /
-    }
-    @auth {
-        header_regexp Cookie st_auth=${NEW_SUFFIX}
-    }
-    handle @auth {
-        basicauth * {
-            $(cat $INSTALL_DIR/.user) $(/usr/local/bin/caddy hash-password --plaintext "$(cat $INSTALL_DIR/.pass)")
-        }
-        reverse_proxy 127.0.0.1:8000
-    }
-    handle {
-        abort
-    }
-}
-EOF2
-            systemctl restart caddy
-            echo -e "新的安全后缀已生效！请查看选项 1 获取新地址。"
-            read -p "按回车键返回..."
+            echo -e "正在打开酒馆后台日志..."
+            echo -e "💡 提示：按 \033[0;31m'q'\033[0m 键退出日志查看。"
+            sleep 2
+            journalctl -u sillytavern -n 200
             ;;
         5)
-            echo -e "正在从官方仓库拉取更新..."
+            echo -e "正在拉取最新代码并更新依赖..."
             cd $INSTALL_DIR
-            BRANCH=$(cat $INSTALL_DIR/.branch 2>/dev/null || echo "release")
-            git fetch --all
-            git checkout $BRANCH
-            git pull origin $BRANCH
-            npm install --omit=dev
-            systemctl restart sillytavern
-            echo -e "更新完成！"
+            git pull
+            npm install
+            chown -R nobody:nogroup $INSTALL_DIR
+            
+            echo -e "正在检查并更新 Caddy 代理组件..."
+            apt-get update >/dev/null 2>&1
+            apt-get install --only-upgrade caddy -y >/dev/null 2>&1
+            
+            systemctl restart sillytavern caddy
+            echo -e "✅ 更新完成！酒馆与代理服务已自动重启。"
             read -p "按回车键返回..."
             ;;
         6)
-            if [ "$(systemctl is-active sillytavern)" == "active" ]; then
-                systemctl stop sillytavern caddy
-                echo "已停止"
-            else
-                systemctl start sillytavern caddy
-                echo "已启动"
-            fi
-            read -p "按回车键返回..."
-            ;;
-        7)
-            read -p "确认卸载吗？所有数据将会丢失！[y/N]: " del_confirm
-            if [[ "$del_confirm" == "y" || "$del_confirm" == "Y" ]]; then
-                systemctl stop sillytavern caddy
-                systemctl disable sillytavern caddy
+            echo -e "\n\033[0;31m警告：这将永久删除 SillyTavern 及其所有配置、本地数据，并卸载相关服务！\033[0m"
+            read -p "你确定要继续吗？(y/N): " CONFIRM
+            if [[ "$CONFIRM" == "y" || "$CONFIRM" == "Y" ]]; then
+                echo -e "正在卸载并清理环境..."
+                systemctl stop sillytavern caddy 2>/dev/null
+                systemctl disable sillytavern caddy 2>/dev/null
                 rm -rf $INSTALL_DIR
-                rm /etc/systemd/system/sillytavern.service
-                rm /etc/systemd/system/caddy.service
-                rm -f /etc/cron.d/caddy-upgrade
+                rm -f /etc/systemd/system/sillytavern.service
+                rm -f /etc/caddy/Caddyfile
                 systemctl daemon-reload
+                echo -e "✅ 卸载完毕！所有残留已被清理。"
                 rm -f /usr/local/bin/silly
-                rm -f /usr/local/bin/caddy
-                echo -e "SillyTavern 与网关代理已完全卸载。"
                 exit 0
+            else
+                echo -e "已取消卸载操作。"
+                read -p "按回车键返回..."
             fi
-            ;;
-        8)
-            echo -e "正在在线拉取 Caddy 最新版内核并升级..."
-            /usr/local/bin/caddy upgrade
-            systemctl restart caddy
-            echo -e "Caddy 防线已升级至最新版本！"
-            read -p "按回车键返回..."
-            ;;
-        9)
-            echo -e "正在打开酒馆后台日志..."
-            echo -e "💡 提示：你可以按上下方向键翻页，按 \033[0;31m'q'\033[0m 键退出日志查看。"
-            sleep 2
-            journalctl -u sillytavern -n 200
             ;;
         0)
             exit 0
@@ -372,20 +299,16 @@ while true; do
     show_menu
 done
 EOF
+chmod +x /usr/local/bin/silly
 
-chmod +x $CLI_PATH
-
-clear
-echo -e "=================================================================="
-echo -e "${GREEN}🎉 SillyTavern 部署成功！${NC}"
-echo -e "=================================================================="
-echo -e "⚠️ 注意: 必须通过以下【带有后缀的完整链接】进行第一次访问！"
-echo -e "如果直接输入域名或 IP，服务器将强制返回 404 错误！"
-echo -e "------------------------------------------------------------------"
-echo -e "🌐 安全专属敲门砖地址: ${YELLOW}https://${DOMAIN}:${PORT}/${SECRET_SUFFIX}${NC}"
-echo -e "👤 登录账号:           ${GREEN}${ST_USER}${NC}"
-echo -e "🔑 登录密码:           ${GREEN}${ST_PASS}${NC}"
-echo -e "=================================================================="
-echo -e "💡 日后随时在终端输入 ${YELLOW}silly${NC} 即可呼出管理面板！"
-echo -e "⚠️ 请务必去你的云服务商后台(如阿里云)放行 80 端口和 ${PORT} 端口！"
-echo -e "=================================================================="
+echo ""
+echo "=========================================="
+echo "SillyTavern 部署成功"
+echo "=========================================="
+echo "访问地址: https://$DOMAIN:$PORT"
+echo ""
+echo "初始登录账号: default-user"
+echo "初始随机密码: $ST_PASSWORD"
+echo ""
+echo "提示：以后随时可以在命令行输入 silly 呼出控制台面板！"
+echo "=========================================="
