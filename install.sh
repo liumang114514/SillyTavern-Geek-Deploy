@@ -71,8 +71,9 @@ cp default/config.yaml config.yaml 2>/dev/null || cp default.yaml config.yaml 2>
 node -e "
 const fs = require('fs');
 let conf = fs.readFileSync('config.yaml', 'utf8');
-conf = conf.replace(/listen: false/, 'listen: true');
-conf = conf.replace(/whitelistMode:\s*true/, 'whitelistMode: false');
+conf = conf.replace(/listen:\s*false/, 'listen: true');
+conf = conf.replace(/ipv4:\s*0\.0\.0\.0/, 'ipv4: 127.0.0.1');
+conf = conf.replace(/whitelistMode:\s*true/g, 'whitelistMode: false');
 conf = conf.replace(/basicAuthMode:\s*true/, 'basicAuthMode: false');
 conf = conf.replace(/enableUserAccounts:\s*false/, 'enableUserAccounts: true');
 conf = conf.replace(/whitelist:[\s\S]*?whitelistDockerHosts:/, 'whitelist: []\nwhitelistDockerHosts:');
@@ -85,7 +86,7 @@ NODE_SCRIPT=$(cat << 'EOF'
 const crypto = require('crypto');
 const fs = require('fs');
 
-const password = crypto.randomBytes(6).toString('hex');
+const password = crypto.randomBytes(12).toString('base64url').slice(0, 16);
 const salt = crypto.randomBytes(16).toString('base64');
 const hash = crypto.scryptSync(password.normalize(), salt, 64).toString('base64');
 
@@ -203,9 +204,9 @@ show_menu() {
             ;;
         2)
             echo -e "\n"
-            read -p "请输入新密码 (直接回车则随机生成 12 位密码): " NEW_PASS
+            read -p "请输入新密码 (直接回车则随机生成 16 位高强度密码): " NEW_PASS
             if [ -z "$NEW_PASS" ]; then
-                NEW_PASS=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 12)
+                NEW_PASS=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)
             fi
             
             echo "正在重置底层数据库密码..."
